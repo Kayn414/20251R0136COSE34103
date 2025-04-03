@@ -1,1 +1,2 @@
-# 20251R0136COSE34103
+# COSE 341 (O3) 
+Repo for Project Assigments
