@@ -1,0 +1,5 @@
+set tags=/home/os-projects/xv6-proj0/tags
+
+if filereadable("./cscope.out")
+	cs add cscope.out
+ endif 
