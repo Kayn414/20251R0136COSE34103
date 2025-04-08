@@ -142,6 +142,8 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
+  p->priority = 5;
+
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
@@ -211,6 +213,12 @@ fork(void)
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
   pid = np->pid;
+
+  if (np->parent->priority >= 15) {
+	  np->priority = np->parent->priority / 2;
+ } else if (np->parent->priority < 15) {
+	 np->priority = np->parent->priority + 1;
+ } 
 
   acquire(&ptable.lock);
 
@@ -531,4 +539,24 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+int
+setnice(int pid, int nice)
+{
+  if( nice < 0 || nice > 30)
+    return -1;
+
+  struct proc *p;
+  acquire(&ptable.lock);
+  for( p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid==pid){
+      p->priority = nice;
+      release(&ptable.lock);
+      return 0;
+    }
+  }
+
+  release(&ptable.lock);
+  return -1;
 }
