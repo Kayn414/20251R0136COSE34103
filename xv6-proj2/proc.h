@@ -1,5 +1,4 @@
-#define MAX_PRIORITY 3
-
+#define MAX_PRIORITY 10
 extern struct proc *ready_queues[MAX_PRIORITY];
 extern struct proc *ready_queue_tails[MAX_PRIORITY];
 extern int queue_head[MAX_PRIORITY];
@@ -69,4 +68,4 @@ struct proc {
 //   text
 //   original data and bss
 //   fixed-size stack
-//   expandable heap
+//   expandable heape

@@ -343,7 +343,7 @@ wait(void)
 void
 scheduler(void)
 {
-  struct proc *p;
+
   struct cpu *c = mycpu();
   c->proc = 0;
   
@@ -353,14 +353,16 @@ scheduler(void)
      
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-      
-    if ((p = pop_ready_queue()) != 0) { 
+
+    struct proc *p = pop_ready_queue(); // get the best one
+   
+    if (p != 0 && p->state == RUNNABLE) { 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      p->state = RUNNING;
       c->proc = p;
       switchuvm(p);
+      p->state = RUNNING;
       swtch(&(c->scheduler), p->context);
       switchkvm();
      
@@ -375,19 +377,26 @@ scheduler(void)
 }
 
 
+
+int better(struct proc* a, struct proc* b) {
+  if (a->priority < b->priority) return 1;
+  if (a->priority == b->priority && a->pid > b->pid) return 1;
+  return 0;
+}
+
 void insert_ready_queue(struct proc *p) {
   struct proc **pp = &ready_queue;
+  
   while (*pp) {
-    if (p->priority < (*pp)->priority || 
-        (p->priority == (*pp)->priority && p->pid > (*pp)->pid)) {
+    if (better(p, *pp)) {
       break;
     }
     pp = &(*pp)->next;
   }
-  p->next = *pp;
-  *pp = p;  
-}
 
+  p->next = *pp;
+  *pp = p;
+}
 
 
 void
@@ -403,6 +412,7 @@ remove_ready_queue(struct proc *p) {
   p->next = 0;
 }
 
+
 struct proc*
 pop_ready_queue() {
   struct proc *p = ready_queue;
@@ -412,7 +422,6 @@ pop_ready_queue() {
     p->next = 0;
   return p;
 }
-
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
