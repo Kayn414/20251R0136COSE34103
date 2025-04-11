@@ -20,10 +20,17 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+struct {
+	struct spinlock lock;
+	struct proc *head;
+} readyqueue;
+
 void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&readyqueue.lock, "readyqueue");
+  readyqueue.head = 0;
 }
 
 // Must be called with interrupts disabled
@@ -226,6 +233,7 @@ fork(void)
 
   release(&ptable.lock);
 
+  insert_to_ready_q(np);
   return pid;
 }
 
@@ -318,6 +326,38 @@ wait(void)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
+
+
+void
+insert_to_ready_q(struct proc *p) {
+	acquire(&readyqueue.lock);
+
+	p->state = RUNNABLE;
+	p->next = 0;
+
+	if(!readyqueue.head) {
+		readyqueue.head = p;
+	} else {
+		struct proc *curr = readyqueue.head;
+		struct proc *prev = 0;
+		
+		while (curr && (curr->priority < p->priority ||
+			(curr->priority == p->priority && curr->pid > p->pid))) {
+			prev = curr;
+			curr = curr->next;
+	} 
+		if (prev) {
+			pre->next = p;
+			p->next = curr;
+		} else {
+			p->next = readqueue.head;
+			readyqueue.head = p;
+		}
+	} 
+
+	release(&readyqueue.lock);
+}
+
 
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
