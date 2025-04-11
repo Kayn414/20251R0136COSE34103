@@ -1,3 +1,14 @@
+#define MAX_PRIORITY 3
+
+extern struct proc *ready_queues[MAX_PRIORITY];
+extern struct proc *ready_queue_tails[MAX_PRIORITY];
+extern int queue_head[MAX_PRIORITY];
+extern int queue_tail[MAX_PRIORITY];
+
+void insert_ready_queue(struct proc *);
+void remove_ready_queue(struct proc *);
+struct proc *pop_ready_queue(void);
+struct proc *select_from_ready_queue(void);
 
 // Per-CPU state
 struct cpu {
@@ -51,7 +62,7 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   int priority;                // Process priority
-  struct proc *next;           // linking for queue
+  struct proc *next; 
 };
  
 // Process memory is laid out contiguously, low addresses first:

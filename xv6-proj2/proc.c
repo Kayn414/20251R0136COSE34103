@@ -12,6 +12,7 @@ void insert_ready_queue(struct proc *);
 void remove_ready_queue(struct proc *);
 struct proc *pop_ready_queue(void);
 
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -158,6 +159,8 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  insert_ready_queue(p);
+  
 
   release(&ptable.lock);
 }
@@ -229,7 +232,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
-
+  insert_ready_queue(np);
   release(&ptable.lock);
 
   return pid;
@@ -347,23 +350,20 @@ scheduler(void)
   for(;;){
     // Enable interrupts on this processor.
     sti();
-
+     
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+      
     if ((p = pop_ready_queue()) != 0) { 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
+      p->state = RUNNING;
       c->proc = p;
       switchuvm(p);
-      p->state = RUNNING;
-
-      swtch(&c->scheduler, p->context);
+      swtch(&(c->scheduler), p->context);
       switchkvm();
-      
-      if (p->state == RUNNABLE) {
-	      insert_ready_queue(p);
-	    }
+     
       // Process is done running for now.
       // It should have changed its p->state before coming back.
        c->proc = 0;
@@ -371,12 +371,11 @@ scheduler(void)
     release(&ptable.lock);
 
   }
+
 }
 
 
-
-void
-insert_ready_queue(struct proc *p) {
+void insert_ready_queue(struct proc *p) {
   struct proc **pp = &ready_queue;
   while (*pp) {
     if (p->priority < (*pp)->priority || 
@@ -386,8 +385,10 @@ insert_ready_queue(struct proc *p) {
     pp = &(*pp)->next;
   }
   p->next = *pp;
-  *pp = p;
+  *pp = p;  
 }
+
+
 
 void
 remove_ready_queue(struct proc *p) {
@@ -519,8 +520,10 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan) {
       p->state = RUNNABLE;
+      insert_ready_queue(p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
