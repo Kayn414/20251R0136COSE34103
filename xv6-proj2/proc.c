@@ -7,6 +7,11 @@
 #include "proc.h"
 #include "spinlock.h"
 
+
+void insert_ready_queue(struct proc *);
+void remove_ready_queue(struct proc *);
+struct proc *pop_ready_queue(void);
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -14,23 +19,18 @@ struct {
 
 static struct proc *initproc;
 
+struct proc *ready_queue = 0;
+
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
 
-struct {
-	struct spinlock lock;
-	struct proc *head;
-} readyqueue;
-
 void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
-  initlock(&readyqueue.lock, "readyqueue");
-  readyqueue.head = 0;
 }
 
 // Must be called with interrupts disabled
@@ -218,22 +218,20 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
+	
   pid = np->pid;
 
-  if (np->parent->priority >= 15) {
-	  np->priority = np->parent->priority / 2;
- } else if (np->parent->priority < 15) {
-	 np->priority = np->parent->priority + 1;
- } 
-
+  if ( curproc->priority >= 15) {
+	  np->priority = curproc->priority / 2;
+  } else if (curproc->priority < 15) {
+	  np->priority = curproc->priority + 1;
+} 
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
 
   release(&ptable.lock);
 
-  insert_to_ready_q(np);
   return pid;
 }
 
@@ -265,6 +263,9 @@ exit(void)
 
   acquire(&ptable.lock);
 
+  if (curproc->state == RUNNABLE) {
+	  remove_ready_queue(curproc);
+	 }
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
 
@@ -328,37 +329,6 @@ wait(void)
 }
 
 
-void
-insert_to_ready_q(struct proc *p) {
-	acquire(&readyqueue.lock);
-
-	p->state = RUNNABLE;
-	p->next = 0;
-
-	if(!readyqueue.head) {
-		readyqueue.head = p;
-	} else {
-		struct proc *curr = readyqueue.head;
-		struct proc *prev = 0;
-		
-		while (curr && (curr->priority < p->priority ||
-			(curr->priority == p->priority && curr->pid > p->pid))) {
-			prev = curr;
-			curr = curr->next;
-	} 
-		if (prev) {
-			pre->next = p;
-			p->next = curr;
-		} else {
-			p->next = readqueue.head;
-			readyqueue.head = p;
-		}
-	} 
-
-	release(&readyqueue.lock);
-}
-
-
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -380,10 +350,7 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
-
+    if ((p = pop_ready_queue()) != 0) { 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
@@ -391,17 +358,60 @@ scheduler(void)
       switchuvm(p);
       p->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
+      swtch(&c->scheduler, p->context);
       switchkvm();
-
+      
+      if (p->state == RUNNABLE) {
+	      insert_ready_queue(p);
+	    }
       // Process is done running for now.
       // It should have changed its p->state before coming back.
-      c->proc = 0;
+       c->proc = 0;
     }
     release(&ptable.lock);
 
   }
 }
+
+
+
+void
+insert_ready_queue(struct proc *p) {
+  struct proc **pp = &ready_queue;
+  while (*pp) {
+    if (p->priority < (*pp)->priority || 
+        (p->priority == (*pp)->priority && p->pid > (*pp)->pid)) {
+      break;
+    }
+    pp = &(*pp)->next;
+  }
+  p->next = *pp;
+  *pp = p;
+}
+
+void
+remove_ready_queue(struct proc *p) {
+  struct proc **pp = &ready_queue;
+  while (*pp) {
+    if (*pp == p) {
+      *pp = p->next;
+      break;
+    }
+    pp = &(*pp)->next;
+  }
+  p->next = 0;
+}
+
+struct proc*
+pop_ready_queue() {
+  struct proc *p = ready_queue;
+  if (p)
+    ready_queue = p->next;
+  if (p)
+    p->next = 0;
+  return p;
+}
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -435,6 +445,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+  insert_ready_queue(myproc());
   sched();
   release(&ptable.lock);
 }
