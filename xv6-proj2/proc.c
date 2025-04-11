@@ -184,25 +184,24 @@ growproc(int n)
   curproc->sz = sz;
   switchuvm(curproc);
   return 0;
-}
 
-// Create a new process copying p as the parent.
-// Sets up stack to return as if from system call.
-// Caller must set state of returned proc to RUNNABLE.
+}
 int
 fork(void)
 {
   int i, pid;
   struct proc *np;
-  struct proc *curproc = myproc();
+  struct proc *curproc;
 
-  // Allocate process.
-  if((np = allocproc()) == 0){
+  cli();
+  curproc = myproc();
+  sti();
+
+  if ((np = allocproc()) == 0) {
     return -1;
   }
 
-  // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+  if ((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0) {
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
@@ -212,32 +211,43 @@ fork(void)
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
-  // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
 
-  for(i = 0; i < NOFILE; i++)
-    if(curproc->ofile[i])
+  for (i = 0; i < NOFILE; i++)
+    if (curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-	
   pid = np->pid;
 
-  if ( curproc->priority >= 15) {
-	  np->priority = curproc->priority / 2;
+  if (curproc->priority >= 15) {
+    np->priority = curproc->priority / 2;
   } else if (curproc->priority < 15) {
-	  np->priority = curproc->priority + 1;
-} 
-  acquire(&ptable.lock);
+    np->priority = curproc->priority + 1;
+  }
 
+  //cprintf("Fork: curproc pid %d pri %d, new proc pid %d pri %d\n",
+    //      curproc->pid, curproc->priority, np->pid, np->priority);
+
+  acquire(&ptable.lock);
   np->state = RUNNABLE;
   insert_ready_queue(np);
+
+  // Always yield to let scheduler pick the highest-priority process
+ // cprintf("Fork: yielding pid %d pri %d\n", curproc->pid, curproc->priority);
+  curproc->state = RUNNABLE;
+  insert_ready_queue(curproc);
+  // Do NOT release ptable.lock here; let the scheduler handle it
+  cli();
+  swtch(&curproc->context, mycpu()->scheduler);
+  sti();
+
+  // After swtch returns, release the lock
   release(&ptable.lock);
 
   return pid;
 }
-
 // Exit the current process.  Does not return.
 // An exited process remains in the zombie state
 // until its parent calls wait() to find out it exited.
@@ -343,46 +353,38 @@ wait(void)
 void
 scheduler(void)
 {
+  struct cpu *c;
 
-  struct cpu *c = mycpu();
+  cli();
+  c = mycpu();
   c->proc = 0;
-  
-  for(;;){
-    // Enable interrupts on this processor.
+  sti();
+
+  for(;;) {
     sti();
-     
-    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
 
-    struct proc *p = pop_ready_queue(); // get the best one
-   
-    if (p != 0 && p->state == RUNNABLE) { 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+    struct proc *p = pop_ready_queue();
+    if (p != 0 && p->state == RUNNABLE) {
+//      cprintf("Scheduling pid %d pri %d\n", p->pid, p->priority);
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
       swtch(&(c->scheduler), p->context);
       switchkvm();
-     
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-       c->proc = 0;
+      c->proc = 0;
+      // Do NOT acquire ptable.lock here; it's already held and will be released below
     }
     release(&ptable.lock);
-
   }
-
 }
-
-
 
 int better(struct proc* a, struct proc* b) {
   if (a->priority < b->priority) return 1;
   if (a->priority == b->priority && a->pid > b->pid) return 1;
   return 0;
 }
+
 
 void insert_ready_queue(struct proc *p) {
   struct proc **pp = &ready_queue;
@@ -398,28 +400,26 @@ void insert_ready_queue(struct proc *p) {
   *pp = p;
 }
 
-
-void
-remove_ready_queue(struct proc *p) {
+void remove_ready_queue(struct proc *p) {
   struct proc **pp = &ready_queue;
   while (*pp) {
     if (*pp == p) {
       *pp = p->next;
-      break;
+      p->next = 0;
+      return;
     }
     pp = &(*pp)->next;
   }
-  p->next = 0;
 }
 
 
 struct proc*
 pop_ready_queue() {
   struct proc *p = ready_queue;
-  if (p)
+  if (p) {
     ready_queue = p->next;
-  if (p)
     p->next = 0;
+  }
   return p;
 }
 
@@ -604,22 +604,59 @@ procdump(void)
   }
 }
 
-int
-setnice(int pid, int nice)
-{
-  if( nice < 0 || nice > 30)
-    return -1;
+
+int setnice(int pid, int nice) {
+  if (nice < 0 || nice > 30) {
+    return -1; // Nice value must be in range [0, 30]
+  }
 
   struct proc *p;
+  struct proc *curproc;
+
+  // Ensure interrupts are disabled when calling myproc()
+  cli();
+  curproc = myproc();
+  sti();
+
   acquire(&ptable.lock);
-  for( p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->pid==pid){
+
+  // Find the process with the given pid
+  for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+    if (p->pid == pid) {
+      cprintf("setnice: pid %d, old pri %d, new pri %d\n", pid, p->priority, nice);
+
+      // If the process is RUNNABLE, remove it from the ready_queue
+      if (p->state == RUNNABLE) {
+        remove_ready_queue(p);
+      }
+
+      // Update the priority
       p->priority = nice;
-      release(&ptable.lock);
+
+      // If the process is RUNNABLE, re-insert it into the ready_queue with new priority
+      if (p->state == RUNNABLE) {
+        insert_ready_queue(p);
+      }
+
+      // Check if a higher-priority process exists in the ready_queue
+      struct proc *head = ready_queue;
+      if (head && head->priority < curproc->priority && curproc->state == RUNNING) {
+        cprintf("setnice: yielding pid %d pri %d for pid %d pri %d\n",
+                curproc->pid, curproc->priority, head->pid, head->priority);
+        curproc->state = RUNNABLE;
+        insert_ready_queue(curproc);
+        release(&ptable.lock);
+        cli(); // Ensure interrupts are disabled for swtch
+        swtch(&curproc->context, mycpu()->scheduler);
+        sti();
+      } else {
+        release(&ptable.lock);
+      }
+
       return 0;
     }
   }
 
   release(&ptable.lock);
-  return -1;
-}
+  return -1; // Process not found
+} 
