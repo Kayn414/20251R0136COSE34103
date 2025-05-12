@@ -329,14 +329,16 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: page not present");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
-      kfree(mem);
+    
+    if (mappages(d, (void *) i, PGSIZE, pa, (flags & ~PTE_W) | PTE_U) < 0) { // Share pages with child
       goto bad;
     }
+
+    *pte = (*pte & ~PTE_W) | PTE_P | PTE_U;
+    inc_refcount(pa);
+    
   }
+  lcr3(V2P(pgdir));  // TLB FLUSH
   return d;
 
 bad:
