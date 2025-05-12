@@ -395,6 +395,12 @@ page_fault(void)
     panic("Invalid access");
     return;
   }
+  va = PGROUNDDOWN(va); // Align to page boundary
+
+  struct proc *curproc;
+  pde_t *pgdir = curproc->pgdir;
+  pte_t *pte = walkpgdir(pgdir, (void *)va, 0); // "walk" the page table to find the PTE
+
   
   return;
 }
