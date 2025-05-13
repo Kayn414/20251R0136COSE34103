@@ -397,12 +397,34 @@ page_fault(void)
   }
   va = PGROUNDDOWN(va); // Align to page boundary
 
-  struct proc *curproc;
-  pde_t *pgdir = curproc->pgdir;
+  
+  struct proc *curproc; // Get the current process
+  pde_t *pgdir = curproc->pgdir; // Get the page directory of the current process
   pte_t *pte = walkpgdir(pgdir, (void *)va, 0); // "walk" the page table to find the PTE
 
-  
-  return;
+  uint *pa = PTE_ADDR(*pte); // Get the physical address from the PTE
+  uint refcount = get_refcount(pa); // Get the reference count of the page
+  if (refcount == 0) {
+    panic("Page fault: no reference count");
+    return;
+  }
+  if (refcount == 1) {
+    char *new_page = kalloc(); // Allocate a new page
+    if (new_page == 0) {
+      panic("Page fault: out of memory");
+      return;
+    }
+    char *orig_page = (char *)P2V(pa); // Get the original page
+    memmove(new_page, orig_page, PGSIZE); // Copy the original page to the new page
+    *pte = V2P(new_page) | PTE_P | PTE_W | PTE_U; // Update the PTE to point to the new page
+    dec_refcount(pa); // Decrement the reference count of the original page
+  } else if (refcount == 1) {
+    *pte |= PTE_W;
+  } else {
+    panic("Page fault: invalid reference count");
+  }
+
+  lcr3(V2P(pgdir)); // Flush the TLB
 }
 
 //PAGEBREAK!
