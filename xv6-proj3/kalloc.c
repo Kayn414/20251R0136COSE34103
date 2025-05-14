@@ -71,8 +71,6 @@ kfree(char *v)
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
-  
-
   if(kmem.use_lock)
     acquire(&kmem.lock);
 

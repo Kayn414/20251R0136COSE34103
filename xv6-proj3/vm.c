@@ -391,40 +391,42 @@ void
 page_fault(void)
 {
   uint va = rcr2();
-  if(va < 0) {
+  if(va >= KERNBASE) { // Check if the address is in the user space
     panic("Invalid access");
     return;
   }
   va = PGROUNDDOWN(va); // Align to page boundary
 
   
-  struct proc *curproc; // Get the current process
+  struct proc *curproc = myproc(); // Get the current process
   pde_t *pgdir = curproc->pgdir; // Get the page directory of the current process
   pte_t *pte = walkpgdir(pgdir, (void *)va, 0); // "walk" the page table to find the PTE
 
-  uint *pa = PTE_ADDR(*pte); // Get the physical address from the PTE
+  uint pa = PTE_ADDR(*pte); // Get the physical address from the PTE
   uint refcount = get_refcount(pa); // Get the reference count of the page
   if (refcount == 0) {
     panic("Page fault: no reference count");
     return;
   }
-  if (refcount == 1) {
-    char *new_page = kalloc(); // Allocate a new page
+  if (refcount > 1) { // If the reference count is greater than 1, we need to copy the page
+    char *new_page = kalloc();
     if (new_page == 0) {
-      panic("Page fault: out of memory");
+      panic("Out of memory");
       return;
     }
-    char *orig_page = (char *)P2V(pa); // Get the original page
-    memmove(new_page, orig_page, PGSIZE); // Copy the original page to the new page
+
+    char *original_page = (char *)P2V(pa); // Get the original page
+    memmove(new_page, original_page, PGSIZE); // Copy the original page to the new page
+
     *pte = V2P(new_page) | PTE_P | PTE_W | PTE_U; // Update the PTE to point to the new page
     dec_refcount(pa); // Decrement the reference count of the original page
-  } else if (refcount == 1) {
-    *pte |= PTE_W;
-  } else {
-    panic("Page fault: invalid reference count");
-  }
 
-  lcr3(V2P(pgdir)); // Flush the TLB
+  } else if (refcount == 1) { // If the reference count is 1, we can just update the PTE
+      *pte |= PTE_W; // Set the write permission
+  } else { // If the reference count is invalid, panic
+    panic("Invalid reference count");
+  }
+  lcr3(V2P(pgdir)); // TLB FLUSH
 }
 
 //PAGEBREAK!
