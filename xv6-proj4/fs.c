@@ -410,6 +410,16 @@ bmap(struct inode *ip, uint bn)
       log_write(bp);
     }
     brelse(bp);
+    
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[off_bn]) == 0){
+      a[off_bn] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+    return addr;
+  }
 
   panic("bmap: out of range");
 }
