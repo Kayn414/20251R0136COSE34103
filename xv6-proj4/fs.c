@@ -461,7 +461,22 @@ itrunc(struct inode *ip)
   if(ip->addrs[NDIRECT+1]){
     bp = bread(ip->dev, ip->addrs[NDIRECT+1]);  // Read doubly-indirect block
     a = (uint*)bp->data;
-   
+    for(j = 0; j < NINDIRECT; j++){
+      if(a[j]){
+        bp2 = bread(ip->dev, a[j]);  // Read indirect block
+        a2 = (uint*)bp2->data;
+        for(k = 0; k < NINDIRECT; k++){
+          if(a2[k])
+            bfree(ip->dev, a2[k]);  // Free data block
+        }
+        brelse(bp2);
+        bfree(ip->dev, a[j]);  // Free indirect block
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);  // Free doubly-indirect block
+    ip->addrs[NDIRECT+1] = 0;
+  }
 
   ip->size = 0;
   iupdate(ip);
